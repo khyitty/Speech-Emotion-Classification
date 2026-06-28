@@ -258,23 +258,63 @@ def is_valid_data_dir(data_dir):
     return all(path.exists() for path in required_paths)
 
 
+def find_missing_audio_files(data_dir, train_df=None, test_df=None, max_examples=5):
+    if train_df is None:
+        train_df = pd.read_csv(data_dir / "train.csv")
+    if test_df is None:
+        test_df = pd.read_csv(data_dir / "test.csv")
+
+    missing = []
+    total = 0
+    for split, dataframe in (("train", train_df), ("test", test_df)):
+        for audio_filename in dataframe["Id"]:
+            total += 1
+            audio_path = data_dir / split / audio_filename
+            if not audio_path.exists():
+                if len(missing) < max_examples:
+                    missing.append(str(audio_path))
+                else:
+                    missing.append(None)
+                break
+
+    return total, missing
+
+
+def is_complete_data_dir(data_dir):
+    if not is_valid_data_dir(data_dir):
+        return False
+
+    _, missing = find_missing_audio_files(data_dir)
+    return not missing
+
+
 def resolve_data_dir(data_dir_arg):
     candidates = []
     if data_dir_arg:
         candidates.append(Path(data_dir_arg))
     candidates.extend(path for path in DEFAULT_DATA_DIR_CANDIDATES if path is not None)
 
+    rejected = []
     for candidate in candidates:
         candidate = candidate.expanduser().resolve()
-        if is_valid_data_dir(candidate):
+        if is_complete_data_dir(candidate):
             return candidate
+        if is_valid_data_dir(candidate):
+            _, missing = find_missing_audio_files(candidate)
+            shown_missing = [path for path in missing if path is not None]
+            rejected.append(
+                f"  - {candidate} exists, but audio files are missing. "
+                f"Example: {shown_missing[0] if shown_missing else 'unknown'}"
+            )
+        else:
+            rejected.append(f"  - {candidate}")
 
-    searched = "\n".join(f"  - {Path(path).expanduser()}" for path in candidates)
     raise FileNotFoundError(
-        "Could not find the dataset directory. Expected train.csv, test.csv, "
-        "sample_submission.csv, train/, and test/.\n"
+        "Could not find a complete dataset directory. Expected train.csv, test.csv, "
+        "sample_submission.csv, train/*.wav, and test/*.wav.\n"
         "Set it with --data-dir or P3_AUDIO_DATA_DIR.\n"
-        f"Searched:\n{searched}"
+        "Checked:\n"
+        + "\n".join(rejected)
     )
 
 
