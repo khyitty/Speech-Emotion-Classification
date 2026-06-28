@@ -258,34 +258,53 @@ def is_valid_data_dir(data_dir):
     return all(path.exists() for path in required_paths)
 
 
-def find_missing_audio_files(data_dir, train_df=None, test_df=None, max_examples=5):
+def summarize_audio_files(data_dir, train_df=None, test_df=None, max_examples=5):
     if train_df is None:
         train_df = pd.read_csv(data_dir / "train.csv")
     if test_df is None:
         test_df = pd.read_csv(data_dir / "test.csv")
 
-    missing = []
-    total = 0
+    summary = {}
     for split, dataframe in (("train", train_df), ("test", test_df)):
+        missing_examples = []
+        found = 0
         for audio_filename in dataframe["Id"]:
-            total += 1
             audio_path = data_dir / split / audio_filename
             if not audio_path.exists():
-                if len(missing) < max_examples:
-                    missing.append(str(audio_path))
-                else:
-                    missing.append(None)
-                break
+                if len(missing_examples) < max_examples:
+                    missing_examples.append(str(audio_path))
+            else:
+                found += 1
 
-    return total, missing
+        summary[split] = {
+            "expected": len(dataframe),
+            "found": found,
+            "missing": len(dataframe) - found,
+            "missing_examples": missing_examples,
+        }
+
+    return summary
 
 
 def is_complete_data_dir(data_dir):
     if not is_valid_data_dir(data_dir):
         return False
 
-    _, missing = find_missing_audio_files(data_dir)
-    return not missing
+    summary = summarize_audio_files(data_dir)
+    return all(split_summary["missing"] == 0 for split_summary in summary.values())
+
+
+def format_audio_summary(summary):
+    lines = []
+    for split in ("train", "test"):
+        split_summary = summary[split]
+        lines.append(
+            f"{split}: found {split_summary['found']}/{split_summary['expected']} "
+            f"audio files, missing {split_summary['missing']}"
+        )
+        if split_summary["missing_examples"]:
+            lines.append(f"    example: {split_summary['missing_examples'][0]}")
+    return "; ".join(lines)
 
 
 def resolve_data_dir(data_dir_arg):
@@ -300,11 +319,10 @@ def resolve_data_dir(data_dir_arg):
         if is_complete_data_dir(candidate):
             return candidate
         if is_valid_data_dir(candidate):
-            _, missing = find_missing_audio_files(candidate)
-            shown_missing = [path for path in missing if path is not None]
+            summary = summarize_audio_files(candidate)
             rejected.append(
-                f"  - {candidate} exists, but audio files are missing. "
-                f"Example: {shown_missing[0] if shown_missing else 'unknown'}"
+                f"  - {candidate} exists, but audio files are incomplete. "
+                f"{format_audio_summary(summary)}"
             )
         else:
             rejected.append(f"  - {candidate}")
