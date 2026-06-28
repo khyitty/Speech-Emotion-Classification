@@ -3,6 +3,7 @@ __pycache__/
 
 data/
 p3dataset/
+2025-basic-p-3-emotion-classification-via-audio/
 results/
 results_*/
 *.pth

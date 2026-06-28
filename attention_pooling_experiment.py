@@ -26,6 +26,7 @@ LABEL_MAP = {
 
 DEFAULT_DATA_DIR_CANDIDATES = [
     Path(os.environ["P3_AUDIO_DATA_DIR"]) if "P3_AUDIO_DATA_DIR" in os.environ else None,
+    Path("2025-basic-p-3-emotion-classification-via-audio"),
     Path("p3dataset"),
     Path(r"C:\Users\kahyu\Downloads\p3dataset\2025-basic-p-3-emotion-classification-via-audio"),
     Path("data/2025-basic-p-3-emotion-classification-via-audio"),
