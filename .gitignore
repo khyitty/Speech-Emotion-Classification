@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 
 data/
+p3dataset/
 results/
 results_*/
 *.pth
