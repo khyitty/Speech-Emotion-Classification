@@ -1,359 +1,199 @@
-# Audio Emotion Classification with CNN and Attention
+# Speech Emotion Classification with Attention Pooling
 
-This project builds a deep learning model for audio emotion classification. The goal is to classify speech audio files into six emotion categories using handcrafted audio features and a 1D convolutional neural network.
+This project classifies speech audio into six emotion categories using handcrafted audio features and a 1D CNN with temporal attention pooling.
 
-The project was developed in Python using PyTorch, librosa, and scikit-learn in a Kaggle notebook environment.
+The original Kaggle notebook is kept in the repository, and the newer experiment is implemented as a standalone Python script:
 
-## Project Overview
+```text
+attention_pooling_experiment.py
+```
 
-This project focuses on classifying audio samples into one of six emotion classes:
+## Task
 
-* Angry
-* Disgust
-* Fear
-* Happy
-* Sad
-* Neutral
+The model predicts one of the following emotion labels:
 
-The overall workflow includes:
-
-1. Loading audio metadata from CSV files
-2. Mapping emotion labels into integer classes
-3. Extracting handcrafted audio features from `.wav` files
-4. Creating a custom PyTorch dataset
-5. Padding variable-length audio feature sequences with a custom `collate_fn`
-6. Building a 1D CNN-based neural network
-7. Applying channel attention and temporal attention pooling
-8. Training the model with cross-entropy loss
-9. Validating model performance
-10. Generating predictions for the test set
-11. Saving the final submission file
+```text
+Angry, Disgust, Fear, Happy, Sad, Neutral
+```
 
 ## Dataset
 
-The dataset used in this project is from the Kaggle competition:
-
-`2025 Basic P-3: Emotion Classification via Audio`
-
-The dataset structure is assumed to be:
+The dataset is from the Kaggle competition:
 
 ```text
-/kaggle/input/2025-basic-p-3-emotion-classification-via-audio
-├── train.csv
-├── test.csv
-├── sample_submission.csv
-├── train/
-│   ├── audio files
-└── test/
-    ├── audio files
+2025 Basic P-3: Emotion Classification via Audio
 ```
 
-The training data contains audio file names and corresponding emotion labels. The test data contains audio file names without labels.
+For local training, place the dataset in this structure:
 
-## Emotion Label Mapping
-
-The emotion labels are converted into integer values so that they can be used for model training.
-
-```python
-label_map = {
-    "Angry": 0,
-    "Disgust": 1,
-    "Fear": 2,
-    "Happy": 3,
-    "Sad": 4,
-    "Neutral": 5
-}
+```text
+2025-basic-p-3-emotion-classification-via-audio/
+  train.csv
+  test.csv
+  sample_submission.csv
+  train/
+    Train_0.wav
+    ...
+  test/
+    Test_0.wav
+    ...
 ```
 
-This mapping is used during training, and the predicted integer labels are converted back into emotion names before generating the submission file.
+The dataset directory is intentionally ignored by Git because the audio files are large and should not be committed.
+
+`attention_pooling_experiment.py` automatically checks these locations:
+
+```text
+P3_AUDIO_DATA_DIR
+2025-basic-p-3-emotion-classification-via-audio/
+p3dataset/
+data/2025-basic-p-3-emotion-classification-via-audio/
+data/
+```
 
 ## Feature Extraction
 
-Instead of feeding raw audio directly into the model, this project extracts handcrafted audio features using `librosa`.
-
-The extracted features are:
-
-* MFCC
-* Pitch
-* RMS Energy
-* Zero Crossing Rate
-
-Each audio file is loaded with a sampling rate of 22050 Hz. The model uses a 3-second audio segment with a 0.5-second offset.
+Each audio file is loaded with `librosa` using:
 
 ```python
-y, sr = librosa.load(file_path, sr=22050, duration=3.0, offset=0.5)
+librosa.load(file_path, sr=22050, duration=3.0, offset=0.5)
 ```
 
-### Extracted Feature Dimensions
+The model uses 16 handcrafted features per time step:
 
-The final feature matrix consists of:
+| Feature | Dimension |
+| --- | ---: |
+| MFCC | 13 |
+| Pitch | 1 |
+| RMS Energy | 1 |
+| Zero Crossing Rate | 1 |
 
-* 13 MFCC coefficients
-* 1 pitch feature
-* 1 RMS energy feature
-* 1 zero crossing rate feature
-
-Therefore, each time frame has 16 features.
+The final input shape for the CNN is:
 
 ```text
-Feature shape: (time_step, 16)
+batch_size x 16 x time_steps
 ```
 
-During batching, the input is reshaped into the following format for the 1D CNN model:
+## Model
 
-```text
-(batch_size, 16, time_step)
-```
+The current experiment uses a 1D CNN feature extractor followed by linear attention pooling.
 
-## Custom Dataset
-
-A custom PyTorch dataset class is used to load audio files and extract features dynamically.
-
-The dataset class handles both training and test data:
-
-* For training data, it returns both features and labels.
-* For test data, it returns only features.
+The attention pooling layer learns which time frames are most useful for emotion classification:
 
 ```python
-class CustomDataset(torch.utils.data.Dataset):
-    def __init__(self, dataframe, label_map, root_path=None, split="Train"):
-        self.df = dataframe.reset_index(drop=True)
-        self.label_map = label_map
-        self.root_path = root_path
-        self.split = split.upper()
-```
-
-## DataLoader and Padding
-
-Since audio files may produce feature sequences of different lengths, a custom `collate_fn` is used.
-
-The function applies padding so that all sequences in the same batch have the same length.
-
-```python
-padded_features = pad_sequence(features, batch_first=True)
-padded_features = padded_features.permute(0, 2, 1)
-```
-
-This converts the batch into the input shape required by the 1D convolutional model.
-
-Example batch shapes:
-
-```text
-Train Batch - Feature shape: torch.Size([32, 16, 130])
-Test Batch - Feature shape: torch.Size([32, 16, 117])
-```
-
-## Model Architecture
-
-The model is a 1D CNN-based neural network designed for audio sequence classification.
-
-The architecture includes:
-
-* 1D convolutional layers
-* Batch normalization
-* ReLU activation
-* Dropout
-* Max pooling
-* Squeeze-and-Excitation channel attention
-* Temporal attention pooling
-* Fully connected classifier
-
-### Attention Components
-
-#### Squeeze-and-Excitation Block
-
-The SE block learns channel-wise importance and reweights feature channels.
-
-```python
-class SE1D(nn.Module):
-    def __init__(self, channels, reduction=16):
-        super().__init__()
-        self.fc1 = nn.Conv1d(channels, channels // reduction, 1)
-        self.fc2 = nn.Conv1d(channels // reduction, channels, 1)
-```
-
-#### Attention Pooling
-
-The attention pooling layer learns which time frames are more important for emotion classification.
-
-```python
-class AttentionPooling1D(nn.Module):
-    def __init__(self, in_channels, hidden=128):
-        super().__init__()
-        self.attn = nn.Sequential(
-            nn.Conv1d(in_channels, hidden, kernel_size=1),
+class AttentionPooling(nn.Module):
+    def __init__(self, input_dim):
+        super(AttentionPooling, self).__init__()
+        self.attention = nn.Sequential(
+            nn.Linear(input_dim, input_dim // 2),
             nn.Tanh(),
-            nn.Conv1d(hidden, 1, kernel_size=1)
+            nn.Linear(input_dim // 2, 1),
         )
+
+    def forward(self, x):
+        x = x.permute(0, 2, 1)
+        attention_scores = self.attention(x)
+        attention_weights = torch.softmax(attention_scores, dim=1)
+        return torch.sum(x * attention_weights, dim=1)
 ```
 
-This helps the model focus on emotionally meaningful parts of the audio sequence.
+The classifier then maps the pooled 256-dimensional representation to the six emotion classes.
 
 ## Training Setup
 
-The model is trained using the following hyperparameters:
+Default training settings:
 
-```python
-args = {
-    "batch_size": 32,
-    "epochs": 15,
-    "lr": 5e-4,
-    "seed_val": 42,
-    "patience": 8
-}
-```
+| Setting | Value |
+| --- | ---: |
+| Batch size | 32 |
+| Epochs | 15 |
+| Learning rate | 5e-4 |
+| Validation split | 0.1 |
+| Seed | 42 |
+| Early stopping patience | 8 |
+| Optimizer | Adam |
+| Loss | CrossEntropyLoss |
 
-The training set and validation set are split using `train_test_split`.
+CUDA is used automatically when a compatible GPU-enabled PyTorch installation is available. Use `--cpu` to force CPU execution.
 
-```python
-train_df, val_df = train_test_split(
-    full_df,
-    test_size=0.1,
-    random_state=42,
-    shuffle=True
-)
-```
+## Results
 
-The model is trained using:
-
-* Loss function: Cross-Entropy Loss
-* Optimizer: Adam
-* Learning rate: 0.0005
-* Batch size: 32
-* Epochs: 15
-
-## Training Results
-
-The model showed gradual improvement during training.
-
-Selected training results:
+The latest attention pooling experiment improved the best validation accuracy compared with the previous reported run.
 
 | Epoch | Train Loss | Train Accuracy | Validation Loss | Validation Accuracy |
-| ----- | ---------: | -------------: | --------------: | ------------------: |
-| 1     |     1.5203 |         0.3750 |          1.5100 |              0.3403 |
-| 5     |     1.3036 |         0.4828 |          1.3410 |              0.4522 |
-| 10    |     1.1694 |         0.5509 |          1.4662 |              0.4433 |
-| 13    |     1.0976 |         0.5814 |          1.1530 |              0.5567 |
-| 15    |     1.0547 |         0.5983 |          1.2082 |              0.5269 |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.5072 | 0.3866 | 1.4693 | 0.3955 |
+| 5 | 1.3128 | 0.4798 | 1.2995 | 0.4896 |
+| 10 | 1.1651 | 0.5542 | 1.2339 | 0.5299 |
+| 11 | 1.1463 | 0.5601 | 1.1570 | 0.5672 |
+| 15 | 1.0620 | 0.5971 | 1.1446 | 0.5493 |
 
-The best validation accuracy was approximately:
-
-```text
-0.5567
-```
-
-The final epoch achieved:
+Best validation accuracy:
 
 ```text
-Train Accuracy: 0.5983
-Validation Accuracy: 0.5269
+0.5672 at epoch 11
 ```
 
-## Prediction and Submission
-
-After training, the model predicts emotion classes for the test audio files.
-
-```python
-preds = test(test_dataloader, model, device)
-preds = int_to_label(label_map, preds)
-```
-
-The predicted labels are inserted into the sample submission file.
-
-```python
-submit = pd.read_csv(args["submit_path"])
-submit["Emotions"] = preds
-submit.to_csv("//kaggle/working/results/submission_p3.csv", index=False)
-```
-
-The final output file is:
-
-```text
-submission_p3.csv
-```
-
-The test set contains 745 audio files.
-
-## Example Prediction Output
-
-Example rows from the generated submission file:
-
-```text
-Id            Emotions
-Test_0.wav    Disgust
-Test_1.wav    Neutral
-Test_2.wav    Sad
-Test_3.wav    Neutral
-Test_4.wav    Neutral
-```
-
-## Technologies Used
-
-* Python
-* PyTorch
-* librosa
-* NumPy
-* pandas
-* scikit-learn
-* matplotlib
-* tqdm
-* Kaggle Notebook
-* Deep Learning
-* Audio Feature Extraction
-* 1D Convolutional Neural Network
+The previous README reported a best validation accuracy of approximately `0.5567`, so this attention pooling run is a small improvement.
 
 ## How to Run
 
-1. Open the notebook in Kaggle.
-2. Add the competition dataset to the notebook.
-3. Install required packages if necessary.
-4. Run all notebook cells in order.
-5. Train the model.
-6. Generate predictions for the test set.
-7. Save the submission file.
+Install dependencies:
+
+```powershell
+pip install -r requirements.txt
+```
+
+Run the full experiment:
+
+```powershell
+python attention_pooling_experiment.py
+```
+
+Optional examples:
+
+```powershell
+python attention_pooling_experiment.py --cpu
+python attention_pooling_experiment.py --epochs 5
+python attention_pooling_experiment.py --data-dir "C:\path\to\dataset"
+python attention_pooling_experiment.py --limit-rows 100
+```
+
+## Outputs
+
+Training outputs are saved to:
+
+```text
+results_attention_pooling/
+  attention_pooling_best.pth
+  attention_pooling_metrics.json
+  attention_pooling_submission.csv
+```
+
+The results directory is ignored by Git because it contains generated checkpoints and submission files.
 
 ## Project Structure
 
 ```text
 .
-├── 2025-basic-p3-7045.ipynb
-├── README.md
-└── submission_p3.csv
+  2025-basic-p3-7045.ipynb
+  attention_pooling_experiment.py
+  requirements.txt
+  README.md
 ```
 
-In the Kaggle environment, the dataset is loaded from:
+Local-only files and folders:
 
 ```text
-/kaggle/input/2025-basic-p-3-emotion-classification-via-audio
+2025-basic-p-3-emotion-classification-via-audio/
+results_attention_pooling/
 ```
 
-The submission file is saved to:
+## Notes
 
-```text
-/kaggle/working/results/submission_p3.csv
-```
+Feature extraction is currently performed on the fly with `librosa`. This makes the first full training run slow because MFCC, pitch, RMS, and ZCR are recomputed from audio files during loading.
 
-## Limitations
-
-This project uses handcrafted features rather than raw waveform-based or spectrogram-based deep learning approaches. While MFCC, pitch, RMS, and ZCR are useful for audio classification, they may not fully capture all emotional patterns in speech.
-
-The model also uses a relatively simple validation strategy with a single train-validation split. More reliable evaluation could be achieved through k-fold cross-validation.
-
-In addition, the model achieved moderate validation accuracy, indicating that there is still room for improvement in feature extraction, model architecture, and training strategy.
-
-## Future Improvements
-
-Possible future improvements include:
-
-* Using Mel-spectrograms as model input
-* Applying data augmentation such as noise injection, time shifting, or pitch shifting
-* Using k-fold cross-validation
-* Trying pretrained audio models
-* Comparing CNN, RNN, LSTM, and Transformer-based models
-* Tuning the learning rate, dropout rate, and batch size
-* Adding class balancing if the dataset is imbalanced
-* Using early stopping based on validation accuracy
-* Saving and loading the best model checkpoint
+A useful next improvement is to cache extracted features as `.npy` or `.pt` files so future runs can train much faster.
 
 ## Author
 
